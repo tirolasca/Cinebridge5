@@ -1,0 +1,52 @@
+# Proxy reverso com HTTPS automático (Let's Encrypt). Única porta pública do sistema.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# Control Center — eventos em tempo real (SSE): sem compressão e sem buffer.
+	handle /painel/api/stream {
+		reverse_proxy cinebridge-admin:3010 {
+			flush_interval -1
+		}
+	}
+
+	# Control Center (SPA + BFF autenticado por sessão)
+	handle /painel* {
+		encode zstd gzip
+		request_body {
+			max_size 100KB
+		}
+		reverse_proxy cinebridge-admin:3010
+	}
+
+	# Endpoints internos/administrativos da API nunca saem pela internet.
+	@internos path /metrics /metrics/* /admin /admin/* /config /estado
+	handle @internos {
+		respond 404
+	}
+
+	# API pública (contratos originais preservados)
+	handle {
+		encode zstd gzip
+		request_body {
+			max_size 200KB
+		}
+		reverse_proxy cinebridge-api:3000 {
+			health_uri /health
+			health_interval 30s
+		}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

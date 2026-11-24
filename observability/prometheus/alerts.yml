@@ -1,0 +1,28 @@
+groups:
+  - name: cinebridge
+    rules:
+      - alert: ServicoForaDoAr
+        expr: up{job="cinebridge-servicos"} == 0
+        for: 1m
+        labels: { severidade: critica }
+        annotations: { summary: "{{ $labels.instance }} não responde ao scraping" }
+      - alert: LatenciaP99Alta
+        expr: histogram_quantile(0.99, sum by (le, servico) (rate(cinebridge_http_request_duration_seconds_bucket{rota!~"/health|/metrics"}[5m]))) > 2
+        for: 5m
+        labels: { severidade: aviso }
+        annotations: { summary: "p99 de {{ $labels.servico }} acima de 2 s" }
+      - alert: TaxaDeErrosAlta
+        expr: sum by (servico) (rate(cinebridge_http_requests_total{status=~"5.."}[5m])) / sum by (servico) (rate(cinebridge_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels: { severidade: critica }
+        annotations: { summary: "Mais de 5% de erros 5xx em {{ $labels.servico }}" }
+      - alert: FilaAcumulando
+        expr: rabbitmq_detailed_queue_messages_ready > 100
+        for: 5m
+        labels: { severidade: aviso }
+        annotations: { summary: "Fila {{ $labels.queue }} com mais de 100 mensagens prontas" }
+      - alert: HeapQuaseCheio
+        expr: cinebridge_nodejs_heap_size_used_bytes / cinebridge_nodejs_heap_size_total_bytes > 0.9
+        for: 10m
+        labels: { severidade: aviso }
+        annotations: { summary: "Heap de {{ $labels.instance }} acima de 90%" }

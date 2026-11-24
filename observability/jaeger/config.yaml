@@ -1,0 +1,43 @@
+# Jaeger v2 (substitui o all-in-one v1, descontinuado): OTLP -> armazenamento Badger persistente (TTL 72 h).
+service:
+  extensions: [jaeger_storage, jaeger_query]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [jaeger_storage_exporter]
+  telemetry:
+    resource:
+      service.name: jaeger
+    logs:
+      level: info
+
+extensions:
+  jaeger_query:
+    storage:
+      traces: primary_store
+  jaeger_storage:
+    backends:
+      primary_store:
+        badger:
+          directories:
+            keys: /badger/key
+            values: /badger/data
+          ephemeral: false
+          ttl:
+            spans: 72h        # compactação de traces por tempo
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: primary_store

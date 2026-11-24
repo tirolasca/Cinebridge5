@@ -1,0 +1,184 @@
+# Produção (hospedagem gratuita / VM pequena). Uso:
+#   docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# Observabilidade completa (Grafana, Loki, Alloy, Jaeger, cAdvisor) é opcional e fica desligada por padrão:
+#   ... --profile observabilidade-completa up -d
+# Requer Docker Compose >= 2.24 (tags !reset / !override).
+#
+# Diferenças em relação ao ambiente local:
+#  - nenhuma porta de serviço/banco/fila publicada: só o Caddy (80/443) fica acessível;
+#  - todos os segredos são obrigatórios (sem valores padrão) e AMBIENTE=producao ativa validações no código;
+#  - sem docker.sock: a governança roda sem escalonamento por Docker (demais regras ativas);
+#  - limites de memória, PostgreSQL e Prometheus ajustados para uma VM pequena.
+
+x-interno: &interno
+  AMBIENTE: producao
+  NODE_ENV: production
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}   # vazio = sem exportar traces (sem Jaeger)
+  DB_POOL_MAX: ${DB_POOL_MAX:-3}
+
+services:
+  caddy:
+    image: caddy:2.11.9-alpine
+    container_name: cinebridge-caddy
+    init: true
+    restart: unless-stopped
+    networks: [cinebridge-net]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: "${DOMAIN:?defina DOMAIN (ex.: cinebridge.duckdns.org)}"
+      ACME_EMAIL: "${ACME_EMAIL:?defina ACME_EMAIL}"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      cinebridge-api: { condition: service_started }
+      cinebridge-admin: { condition: service_started }
+    mem_limit: 64m
+
+  # ---------- aplicação ----------
+  cinebridge-api:
+    ports: !reset []
+    environment:
+      <<: *interno
+      ADMIN_TOKEN: "${ADMIN_TOKEN:?defina ADMIN_TOKEN (>= 24 caracteres)}"
+      HABILITAR_SIMULACAO: "false"
+      TRUST_PROXY: "true"
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
+    mem_limit: 192m
+
+  cinebridge-admin:
+    ports: !reset []
+    environment:
+      <<: *interno
+      ADMIN_USER: "${ADMIN_USER:?defina ADMIN_USER}"
+      ADMIN_PASSWORD_HASH: "${ADMIN_PASSWORD_HASH:?gere com scripts/hash-senha.sh}"
+      ADMIN_TOKEN: "${ADMIN_TOKEN:?defina ADMIN_TOKEN (>= 24 caracteres)}"
+      RABBITMQ_USER: "${RABBITMQ_USER:?defina RABBITMQ_USER}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?defina RABBITMQ_PASSWORD}"
+      COOKIE_SEGURO: "true"
+      TRUST_PROXY: "true"
+    mem_limit: 128m
+
+  cinebridge-profissionais:
+    ports: !reset []
+    environment: { <<: *interno }
+    mem_limit: 128m
+
+  cinebridge-projetos:
+    ports: !reset []
+    environment: { <<: *interno }
+    mem_limit: 128m
+
+  cinebridge-notificacoes:
+    ports: !reset []
+    environment: { <<: *interno }
+    mem_limit: 128m
+
+  cinebridge-governanca:
+    ports: !reset []
+    user: node                                   # sem docker.sock não há motivo para root
+    volumes: !override
+      - governanca-data:/data
+    environment:
+      <<: *interno
+      ADMIN_TOKEN: "${ADMIN_TOKEN:?defina ADMIN_TOKEN (>= 24 caracteres)}"
+      DOCKER_HABILITADO: "false"
+      GOV_SERVICOS_ESCALAVEIS: ""
+    mem_limit: 96m
+
+  # ---------- mensageria e bancos (credenciais obrigatórias, sem portas publicadas) ----------
+  cinebridge-mq:
+    ports: !reset []
+    environment:
+      RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER:?defina RABBITMQ_USER}"
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD:?defina RABBITMQ_PASSWORD}"
+    mem_limit: 384m
+
+  profissionais-db:
+    ports: !reset []
+    environment:
+      POSTGRES_USER: "${PROFISSIONAIS_DB_USER:?defina PROFISSIONAIS_DB_USER}"
+      POSTGRES_PASSWORD: "${PROFISSIONAIS_DB_PASSWORD:?defina PROFISSIONAIS_DB_PASSWORD}"
+      POSTGRES_DB: profissionais
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=20", "-c", "work_mem=2MB"]
+    mem_limit: 128m
+
+  projetos-db:
+    ports: !reset []
+    environment:
+      POSTGRES_USER: "${PROJETOS_DB_USER:?defina PROJETOS_DB_USER}"
+      POSTGRES_PASSWORD: "${PROJETOS_DB_PASSWORD:?defina PROJETOS_DB_PASSWORD}"
+      POSTGRES_DB: projetos
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=20", "-c", "work_mem=2MB"]
+    mem_limit: 128m
+
+  notificacoes-db:
+    ports: !reset []
+    environment:
+      POSTGRES_USER: "${NOTIFICACOES_DB_USER:?defina NOTIFICACOES_DB_USER}"
+      POSTGRES_PASSWORD: "${NOTIFICACOES_DB_PASSWORD:?defina NOTIFICACOES_DB_PASSWORD}"
+      POSTGRES_DB: notificacoes
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=20", "-c", "work_mem=2MB"]
+    mem_limit: 128m
+
+  recomendacoes-db:
+    ports: !reset []
+    environment:
+      POSTGRES_USER: "${RECOMENDACOES_DB_USER:?defina RECOMENDACOES_DB_USER}"
+      POSTGRES_PASSWORD: "${RECOMENDACOES_DB_PASSWORD:?defina RECOMENDACOES_DB_PASSWORD}"
+      POSTGRES_DB: recomendacoes
+    command: ["postgres", "-c", "shared_buffers=32MB", "-c", "max_connections=20", "-c", "work_mem=2MB"]
+    mem_limit: 128m
+
+  # ---------- observabilidade leve (sempre ligada): Prometheus alimenta a governança ----------
+  cinebridge-prometheus:
+    ports: !reset []
+    user: "65534:65534"                          # nobody: sem docker.sock não precisa de root
+    command: !override
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=3d
+      - --storage.tsdb.retention.size=300MB
+    volumes: !override
+      - prometheus-data:/prometheus
+      - ./observability/prometheus/prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    mem_limit: 192m
+
+  # ---------- observabilidade completa: opcional (profile) ----------
+  cinebridge-grafana:
+    profiles: [observabilidade-completa]
+    ports: !reset []
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_USER:?defina GRAFANA_USER}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:?defina GRAFANA_PASSWORD}"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    mem_limit: 256m
+
+  cinebridge-loki:
+    profiles: [observabilidade-completa]
+    mem_limit: 256m
+
+  cinebridge-alloy:
+    profiles: [observabilidade-completa]
+    mem_limit: 192m
+
+  cinebridge-jaeger:
+    profiles: [observabilidade-completa]
+    ports: !reset []
+    mem_limit: 256m
+
+  cinebridge-cadvisor:
+    profiles: [observabilidade-completa]
+    ports: !reset []
+    mem_limit: 128m
+
+volumes:
+  caddy-data:
+  caddy-config:

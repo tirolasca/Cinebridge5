@@ -1,0 +1,45 @@
+// Coleta os logs JSON (stdout) dos containers Cinebridge via API do Docker e envia ao Loki.
+discovery.docker "cinebridge" {
+  host = "unix:///var/run/docker.sock"
+  filter {
+    name   = "label"
+    values = ["cinebridge.servico"]
+  }
+}
+
+discovery.relabel "cinebridge" {
+  targets = discovery.docker.cinebridge.targets
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_cinebridge_servico"]
+    target_label  = "servico"
+  }
+}
+
+loki.source.docker "cinebridge" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.relabel.cinebridge.output
+  relabel_rules = discovery.relabel.cinebridge.rules
+  forward_to    = [loki.process.json.receiver]
+}
+
+// Extrai o nível do log JSON como rótulo (consultas rápidas por severidade).
+loki.process "json" {
+  stage.json {
+    expressions = { nivel = "nivel" }
+  }
+  stage.labels {
+    values = { nivel = "" }
+  }
+  forward_to = [loki.write.padrao.receiver]
+}
+
+loki.write "padrao" {
+  endpoint {
+    url = "http://cinebridge-loki:3100/loki/api/v1/push"
+  }
+}

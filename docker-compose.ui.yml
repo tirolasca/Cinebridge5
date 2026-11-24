@@ -1,0 +1,13 @@
+# Opcional: publica as UIs internas SOMENTE em 127.0.0.1 do servidor (acesso por túnel SSH). Uso:
+#   docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.ui.yml --profile observabilidade-completa up -d
+#   ssh -L 3005:127.0.0.1:3005 -L 16686:127.0.0.1:16686 -L 9090:127.0.0.1:9090 usuario@servidor   # e abra http://localhost:3005
+services:
+  cinebridge-grafana:
+    ports: !override
+      - "127.0.0.1:3005:3000"
+  cinebridge-jaeger:
+    ports: !override
+      - "127.0.0.1:16686:16686"
+  cinebridge-prometheus:
+    ports: !override
+      - "127.0.0.1:9090:9090"

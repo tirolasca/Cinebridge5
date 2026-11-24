@@ -1,0 +1,14 @@
+.env
+node_modules
+dist
+
+dist-test/
+secrets/
+backups/
+*.pem
+.env.*
+!.env.example
+!.env.prod.example
+
+frontend/dist/
+frontend/node_modules/

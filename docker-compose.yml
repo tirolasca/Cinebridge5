@@ -1,0 +1,435 @@
+# Cinebridge - ATVV: observabilidade, governança e evolução autônoma (sobre a arquitetura da ATVIV)
+# Uso: docker compose up --build -d
+# Variáveis podem ser sobrescritas por um arquivo .env na raiz (ver valores padrão abaixo).
+
+x-logging: &logging
+  driver: json-file
+  options:            # rotação de logs do Docker (evita crescimento ilimitado)
+    max-size: "10m"
+    max-file: "3"
+
+x-postgres: &postgres
+  image: postgres:18-alpine
+  init: true
+  restart: unless-stopped
+  logging: *logging
+  networks: [cinebridge-net]
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 10s
+
+x-servico: &servico
+  init: true
+  restart: unless-stopped
+  logging: *logging
+  networks: [cinebridge-net]
+  environment: &servico-env
+    NODE_ENV: ${NODE_ENV:-production}
+    AMBIENTE: ${AMBIENTE:-local}
+    DB_POOL_MAX: ${DB_POOL_MAX:-5}
+    RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@cinebridge-mq:5672
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://cinebridge-jaeger:4318
+    LOG_LEVEL: ${LOG_LEVEL:-info}
+
+services:
+  # ---------- Mensageria ----------
+  cinebridge-mq:
+    image: rabbitmq:4.4.1-management-alpine
+    container_name: cinebridge-mq
+    init: true
+    restart: unless-stopped
+    logging: *logging
+    labels:
+      cinebridge.servico: cinebridge-mq
+    networks: [cinebridge-net]
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # Interface de gerenciamento
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    volumes:
+      - mq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---------- Bancos de dados (um por serviço) ----------
+  profissionais-db:
+    <<: *postgres
+    container_name: profissionais-db
+    ports: ["5432:5432"]
+    environment:
+      POSTGRES_USER: ${PROFISSIONAIS_DB_USER:-cinebridge}
+      POSTGRES_PASSWORD: ${PROFISSIONAIS_DB_PASSWORD:-cinebridge}
+      POSTGRES_DB: profissionais
+    volumes: [profissionais-db-data:/var/lib/postgresql]
+
+  projetos-db:
+    <<: *postgres
+    container_name: projetos-db
+    ports: ["5433:5432"]
+    environment:
+      POSTGRES_USER: ${PROJETOS_DB_USER:-cinebridge}
+      POSTGRES_PASSWORD: ${PROJETOS_DB_PASSWORD:-cinebridge}
+      POSTGRES_DB: projetos
+    volumes: [projetos-db-data:/var/lib/postgresql]
+
+  recomendacoes-db:
+    <<: *postgres
+    container_name: recomendacoes-db
+    ports: ["5434:5432"]
+    environment:
+      POSTGRES_USER: ${RECOMENDACOES_DB_USER:-cinebridge}
+      POSTGRES_PASSWORD: ${RECOMENDACOES_DB_PASSWORD:-cinebridge}
+      POSTGRES_DB: recomendacoes
+    volumes: [recomendacoes-db-data:/var/lib/postgresql]
+
+  notificacoes-db:
+    <<: *postgres
+    container_name: notificacoes-db
+    ports: ["5435:5432"]
+    environment:
+      POSTGRES_USER: ${NOTIFICACOES_DB_USER:-cinebridge}
+      POSTGRES_PASSWORD: ${NOTIFICACOES_DB_PASSWORD:-cinebridge}
+      POSTGRES_DB: notificacoes
+    volumes: [notificacoes-db-data:/var/lib/postgresql]
+
+  # ---------- Microsserviços ----------
+  cinebridge-profissionais:
+    <<: *servico
+    container_name: cinebridge-profissionais
+    labels:
+      cinebridge.servico: cinebridge-profissionais
+      cinebridge.metrics: "true"
+      cinebridge.metrics.port: "3001"
+      cinebridge.escalavel: "true"
+    build: ./services/profissionais
+    ports: ["3001:3001"]
+    environment:
+      <<: *servico-env
+      PORT: 3001
+      SERVICO_NOME: cinebridge-profissionais
+      DB_HOST: profissionais-db
+      DB_PORT: 5432
+      DB_USER: ${PROFISSIONAIS_DB_USER:-cinebridge}
+      DB_PASSWORD: ${PROFISSIONAIS_DB_PASSWORD:-cinebridge}
+      DB_NAME: profissionais
+    depends_on:
+      profissionais-db: { condition: service_healthy }
+      cinebridge-mq: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  cinebridge-projetos:
+    <<: *servico
+    container_name: cinebridge-projetos
+    labels:
+      cinebridge.servico: cinebridge-projetos
+      cinebridge.metrics: "true"
+      cinebridge.metrics.port: "3002"
+      cinebridge.escalavel: "true"
+    build: ./services/projetos
+    ports: ["3002:3002"]
+    environment:
+      <<: *servico-env
+      PORT: 3002
+      SERVICO_NOME: cinebridge-projetos
+      DB_HOST: projetos-db
+      DB_PORT: 5432
+      DB_USER: ${PROJETOS_DB_USER:-cinebridge}
+      DB_PASSWORD: ${PROJETOS_DB_PASSWORD:-cinebridge}
+      DB_NAME: projetos
+    depends_on:
+      projetos-db: { condition: service_healthy }
+      cinebridge-mq: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3002/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  cinebridge-notificacoes:
+    <<: *servico
+    container_name: cinebridge-notificacoes
+    labels:
+      cinebridge.servico: cinebridge-notificacoes
+      cinebridge.metrics: "true"
+      cinebridge.metrics.port: "3003"
+      cinebridge.escalavel: "true"
+    build: ./services/notificacoes
+    ports: ["3003:3003"]
+    environment:
+      <<: *servico-env
+      PORT: 3003
+      SERVICO_NOME: cinebridge-notificacoes
+      FALHA_SIMULADA_PCT: ${FALHA_SIMULADA_PCT:-3}
+      DB_HOST: notificacoes-db
+      DB_PORT: 5432
+      DB_USER: ${NOTIFICACOES_DB_USER:-cinebridge}
+      DB_PASSWORD: ${NOTIFICACOES_DB_PASSWORD:-cinebridge}
+      DB_NAME: notificacoes
+    depends_on:
+      notificacoes-db: { condition: service_healthy }
+      cinebridge-mq: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3003/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  cinebridge-api:
+    <<: *servico
+    container_name: cinebridge-api
+    labels:
+      cinebridge.servico: cinebridge-api
+      cinebridge.metrics: "true"
+      cinebridge.metrics.port: "3000"
+      cinebridge.escalavel: "false"
+    build: ./services/api
+    ports: ["3000:3000"]
+    environment:
+      <<: *servico-env
+      PORT: 3000
+      SERVICO_NOME: cinebridge-api
+      # Habilita POST /admin/simulacao (só para demonstração; desligue em produção)
+      HABILITAR_SIMULACAO: ${HABILITAR_SIMULACAO:-true}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
+      TAXA_PLATAFORMA: ${TAXA_PLATAFORMA:-0.1}
+      DB_HOST: recomendacoes-db
+      DB_PORT: 5432
+      DB_USER: ${RECOMENDACOES_DB_USER:-cinebridge}
+      DB_PASSWORD: ${RECOMENDACOES_DB_PASSWORD:-cinebridge}
+      DB_NAME: recomendacoes
+    depends_on:
+      recomendacoes-db: { condition: service_healthy }
+      cinebridge-mq: { condition: service_healthy }
+      cinebridge-profissionais: { condition: service_healthy }
+      cinebridge-projetos: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ================= Control Center (BFF + frontend React) =================
+  cinebridge-admin:
+    <<: *servico
+    container_name: cinebridge-admin
+    build:
+      context: .
+      dockerfile: services/admin/Dockerfile
+    ports: ["3010:3010"]                 # http://localhost:3010/painel/
+    labels:
+      cinebridge.servico: cinebridge-admin
+      cinebridge.metrics: "true"
+      cinebridge.metrics.port: "3010"
+    environment:
+      <<: *servico-env
+      PORT: 3010
+      SERVICO_NOME: cinebridge-admin
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      # Vazio no ambiente local: o servidor gera uma senha aleatória e a imprime UMA vez no log (docker compose logs cinebridge-admin).
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      COOKIE_SEGURO: ${COOKIE_SEGURO:-false}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      GRAFANA_URL_PUBLICA: ${GRAFANA_URL_PUBLICA:-http://localhost:3005}
+      JAEGER_URL_PUBLICA: ${JAEGER_URL_PUBLICA:-http://localhost:16686}
+    depends_on:
+      cinebridge-api: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3010/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ================= ATVV: governança e evolução autônoma =================
+  cinebridge-governanca:
+    <<: *servico
+    container_name: cinebridge-governanca
+    build: ./services/governanca
+    ports: ["3004:3004"]
+    stop_grace_period: 30s
+    user: "0:0"   # local: precisa ler o docker.sock; em produção (sem socket) roda como "node"
+    labels:
+      cinebridge.servico: cinebridge-governanca
+      cinebridge.metrics: "true"
+      cinebridge.metrics.port: "3004"
+    environment:
+      <<: *servico-env
+      PORT: 3004
+      SERVICO_NOME: cinebridge-governanca
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      DOCKER_HABILITADO: ${DOCKER_HABILITADO:-true}
+      PROMETHEUS_URL: http://cinebridge-prometheus:9090
+      LOKI_URL: http://cinebridge-loki:3100
+      GRAFANA_URL: http://cinebridge-grafana:3000
+      GRAFANA_USUARIO: ${GRAFANA_USER:-admin}
+      GRAFANA_SENHA: ${GRAFANA_PASSWORD:-cinebridge}
+      # Limiares: padrões do enunciado; reduza as janelas em .env para demonstrar em minutos.
+      INTERVALO_S: ${GOV_INTERVALO_S:-15}
+      LATENCIA_LIMITE_S: ${GOV_LATENCIA_LIMITE_S:-2}
+      LATENCIA_JANELA_S: ${GOV_LATENCIA_JANELA_S:-300}
+      REVERSAO_S: ${GOV_REVERSAO_S:-900}
+      CACHE_COOLDOWN_S: ${GOV_CACHE_COOLDOWN_S:-120}
+      CACHE_AMOSTRA_MIN: ${GOV_CACHE_AMOSTRA_MIN:-20}
+      CPU_JANELA_S: ${GOV_CPU_JANELA_S:-600}
+      SERVICOS_ESCALAVEIS: ${GOV_SERVICOS_ESCALAVEIS:-cinebridge-profissionais,cinebridge-projetos,cinebridge-notificacoes}
+      LIMITE_LOKI_MB: ${GOV_LIMITE_LOKI_MB:-512}
+      LIMITE_JAEGER_MB: ${GOV_LIMITE_JAEGER_MB:-256}
+    volumes:
+      - governanca-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock   # escalonamento horizontal via API do Docker
+    depends_on:
+      cinebridge-mq: { condition: service_healthy }
+      cinebridge-prometheus: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3004/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ================= ATVV: stack de observabilidade =================
+  cinebridge-prometheus:
+    image: prom/prometheus:v3.16.0
+    container_name: cinebridge-prometheus
+    init: true
+    restart: unless-stopped
+    logging: *logging
+    networks: [cinebridge-net]
+    user: "0:0"   # necessário para ler o socket do Docker (descoberta de containers e réplicas)
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=1GB
+    ports: ["9090:9090"]
+    volumes:
+      - prometheus-data:/prometheus
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  cinebridge-cadvisor:
+    image: ghcr.io/google/cadvisor:v0.61.0
+    container_name: cinebridge-cadvisor
+    init: true
+    restart: unless-stopped
+    logging: *logging
+    networks: [cinebridge-net]
+    privileged: true
+    command: ["--docker_only=true", "--housekeeping_interval=15s"]
+    ports: ["8081:8080"]
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+
+  cinebridge-loki:
+    image: grafana/loki:3.7.10
+    container_name: cinebridge-loki
+    init: true
+    restart: unless-stopped
+    logging: *logging
+    networks: [cinebridge-net]
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - loki-data:/loki
+      - ./observability/loki/loki.yml:/etc/loki/loki.yml:ro
+
+  cinebridge-alloy:
+    image: grafana/alloy:v1.22.0
+    container_name: cinebridge-alloy
+    init: true
+    restart: unless-stopped
+    logging: *logging
+    networks: [cinebridge-net]
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - alloy-data:/var/lib/alloy/data
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [cinebridge-loki]
+
+  cinebridge-jaeger:
+    image: jaegertracing/jaeger:2.23.0
+    container_name: cinebridge-jaeger
+    init: true
+    restart: unless-stopped
+    logging: *logging
+    networks: [cinebridge-net]
+    user: "0:0"                         # volume nomeado novo pertence a root; ajuste o uid se preferir
+    command: ["--config", "/etc/jaeger/config.yaml"]
+    ports: ["16686:16686"]              # interface do Jaeger
+    volumes:
+      - jaeger-data:/badger
+      - ./observability/jaeger/config.yaml:/etc/jaeger/config.yaml:ro
+
+  cinebridge-grafana:
+    image: grafana/grafana:13.3.1
+    container_name: cinebridge-grafana
+    init: true
+    restart: unless-stopped
+    logging: *logging
+    networks: [cinebridge-net]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-cinebridge}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/saude-operacional.json
+    ports: ["3005:3000"]
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/etc/grafana/dashboards:ro
+    depends_on: [cinebridge-prometheus, cinebridge-loki, cinebridge-jaeger]
+
+networks:
+  cinebridge-net:
+    name: cinebridge-net
+    driver: bridge
+
+volumes:
+  mq-data:
+  profissionais-db-data:
+  projetos-db-data:
+  recomendacoes-db-data:
+  notificacoes-db-data:
+  prometheus-data:
+  loki-data:
+  jaeger-data:
+  grafana-data:
+  alloy-data:
+  governanca-data:

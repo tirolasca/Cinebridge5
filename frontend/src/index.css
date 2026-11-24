@@ -1,0 +1,104 @@
+@import 'tailwindcss';
+
+/* Tokens do tema. Dark-first; o tema claro sobrescreve via [data-theme='light']. */
+:root,
+[data-theme='dark'] {
+  --bg: #080c18;
+  --bg-elev: #0d1324;
+  --surface: #111a2f;
+  --surface-2: #17223d;
+  --border: #223052;
+  --text: #e8edf8;
+  --muted: #8b98b8;
+  --accent: #f5b544; /* luz de projetor */
+  --accent-fg: #1a1203;
+  --teal: #5eead4;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
+  color-scheme: dark;
+}
+[data-theme='light'] {
+  --bg: #f4f6fb;
+  --bg-elev: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #eef1f8;
+  --border: #d5dcec;
+  --text: #0e1630;
+  --muted: #55627f;
+  --accent: #b86e00;
+  --accent-fg: #ffffff;
+  --teal: #0f766e;
+  --ok: #047857;
+  --warn: #92400e;
+  --danger: #b91c1c;
+  --info: #1d4ed8;
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-elev: var(--bg-elev);
+  --color-surface: var(--surface);
+  --color-surface2: var(--surface-2);
+  --color-line: var(--border);
+  --color-fg: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-teal: var(--teal);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Assinatura visual: tira de filme (perfurações) e feixe de projetor. */
+.filmstrip {
+  background-image: radial-gradient(circle at 50% 50%, var(--bg) 0 3px, transparent 3.5px);
+  background-size: 14px 18px;
+  background-repeat: repeat-y;
+  background-position: center 4px;
+}
+.beam {
+  background:
+    radial-gradient(60% 120% at 0% 0%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
+    radial-gradient(50% 100% at 100% 0%, color-mix(in srgb, var(--teal) 14%, transparent), transparent 70%);
+}
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
+  100% { box-shadow: 0 0 0 8px transparent; }
+}
+.pulse-dot { animation: pulse-ring 1.8s ease-out infinite; }
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.fade-up { animation: fade-up 0.35s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+dialog::backdrop { background: rgb(2 6 18 / 0.7); backdrop-filter: blur(2px); }

@@ -1,0 +1,24 @@
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://cinebridge-prometheus:9090
+    isDefault: true
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://cinebridge-loki:3100
+    jsonData:
+      derivedFields:           # clicar no correlationId do log abre o trace no Jaeger
+        - name: TraceID
+          matcherRegex: '"correlationId":"(\w+)"'
+          url: '$${__value.raw}'
+          datasourceUid: jaeger
+  - name: Jaeger
+    uid: jaeger
+    type: jaeger
+    access: proxy
+    url: http://cinebridge-jaeger:16686

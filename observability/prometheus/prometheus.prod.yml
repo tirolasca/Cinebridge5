@@ -1,0 +1,28 @@
+# Produção sem acesso ao Docker: alvos estáticos (a descoberta por docker_sd é só do ambiente local).
+global:
+  scrape_interval: 30s        # menos coletas = menos CPU/disco no plano gratuito
+  evaluation_interval: 30s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: cinebridge-servicos
+    static_configs:
+      - { targets: ["cinebridge-api:3000"],           labels: { servico: cinebridge-api,           instance: cinebridge-api } }
+      - { targets: ["cinebridge-profissionais:3001"], labels: { servico: cinebridge-profissionais, instance: cinebridge-profissionais } }
+      - { targets: ["cinebridge-projetos:3002"],      labels: { servico: cinebridge-projetos,      instance: cinebridge-projetos } }
+      - { targets: ["cinebridge-notificacoes:3003"],  labels: { servico: cinebridge-notificacoes,  instance: cinebridge-notificacoes } }
+      - { targets: ["cinebridge-admin:3010"],         labels: { servico: cinebridge-admin,         instance: cinebridge-admin } }
+      - { targets: ["cinebridge-governanca:3004"],    labels: { servico: cinebridge-governanca,    instance: cinebridge-governanca } }
+
+  - job_name: rabbitmq
+    static_configs:
+      - targets: ["cinebridge-mq:15692"]
+
+  - job_name: rabbitmq-filas
+    metrics_path: /metrics/detailed
+    params:
+      family: ["queue_coarse_metrics"]
+    static_configs:
+      - targets: ["cinebridge-mq:15692"]
