@@ -27,6 +27,6 @@ COPY services/admin/package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
 COPY --from=build --chown=node:node /usr/src/app/dist ./dist
 COPY --from=front --chown=node:node /app/dist ./public
-USER node
+USER 1000:1000
 EXPOSE 3010
 CMD ["node", "dist/main.js"]

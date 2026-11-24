@@ -17,7 +17,7 @@ RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
 # Diretório de auditoria gravável pelo usuário não-privilegiado (volume herda a propriedade)
 RUN mkdir -p /data && chown node:node /data
 COPY --from=build --chown=node:node /usr/src/app/dist ./dist
-USER node
+USER 1000:1000
 EXPOSE 3004
 # O encerramento limpo (SIGTERM) é tratado pelo próprio processo; o compose usa init: true (tini) como PID 1.
 CMD ["node", "dist/main.js"]
