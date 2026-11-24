@@ -1,6 +1,6 @@
 # Cinebridge — Arquitetura (observabilidade, governança e evolução autônoma)
 
-Evolução da arquitetura da ATVIV (4 microsserviços + RabbitMQ + 4 PostgreSQL) com:
+Evolução da arquitetura (4 microsserviços + RabbitMQ + 4 PostgreSQL) com:
 
 1. **Instrumentação** dos serviços: métricas Prometheus (`/metrics`), logs JSON estruturados e traces distribuídos (OpenTelemetry) propagados por HTTP **e** pelas mensagens do RabbitMQ.
 2. **Stack de observabilidade** no `docker-compose.yml`: Prometheus, Grafana, Loki (+ Alloy para coletar os logs do Docker), Jaeger, cAdvisor — todos na rede `cinebridge-net`, com dados em volumes.
@@ -66,7 +66,7 @@ Novidades de API para sustentar as métricas de negócio:
 
 Ciclo a cada 15 s: consulta o Prometheus → avalia regras → publica configuração no RabbitMQ (exchange `cinebridge.config`, chaves `<servico>.<assunto>` / `todos.<assunto>`; cada instância recebe sua cópia numa fila exclusiva) → registra auditoria (log JSON com `auditoria:true`, arquivo `/data/auditoria.jsonl`, contador Prometheus e anotação no Grafana).
 
-| # | Regra (padrões do enunciado) | Ação |
+| # | Regra | Ação |
 | --- | --- | --- |
 | 1 | tempo médio do recomendador `PRINCIPAL` > 2 s por mais de 5 min | api alterna para `ORCAMENTO` (regras de orçamento, mais rápida). Após 15 min tenta voltar à principal (se continuar lenta, troca de novo). |
 | 2 | taxa de acerto do cache < 30% / > 80% (janela de 5 min, mín. 20 consultas, 2 min entre ajustes) | < 30%: dobra TTL e tamanho (até 600 s / 1000). > 80%: divide o TTL por 2 (mín. 5 s). |
