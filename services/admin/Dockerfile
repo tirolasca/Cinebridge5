@@ -24,7 +24,12 @@ FROM node:26-alpine
 WORKDIR /usr/src/app
 ENV NODE_ENV=production STATIC_DIR=/usr/src/app/public
 COPY services/admin/package*.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
+RUN --mount=type=cache,target=/root/.npm \
+  npm ci --omit=dev \
+  && rm -rf \
+  /usr/local/lib/node_modules/npm \
+  /usr/local/bin/npm \
+  /usr/local/bin/npx
 COPY --from=build --chown=node:node /usr/src/app/dist ./dist
 COPY --from=front --chown=node:node /app/dist ./public
 USER 1000:1000
